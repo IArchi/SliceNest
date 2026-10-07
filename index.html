@@ -21,37 +21,43 @@
       .model-card select { margin-top: 5px; }
       .model-card .model-preview { width: auto; margin: 0; accent-color: var(--teal); }
       .model-card .model-preview-label { display: flex; align-items: center; gap: 7px; margin-top: 9px; cursor: pointer; }
+      .language-switcher { align-self: start; display: flex; border: 1px solid #617078; border-radius: 3px; overflow: hidden; }
+      .language-switcher button { border: 0; padding: 6px 9px; background: transparent; color: #c8d2d4; font: 700 11px inherit; cursor: pointer; }
+      .language-switcher button + button { border-left: 1px solid #617078; }
+      .language-switcher button.is-active { background: #fff; color: var(--ink); }
+      @media (max-width: 620px) { header { align-items: start; } .language-switcher { margin-left: auto; } }
     </style>
   </head>
   <body>
     <header>
       <div><span class="eyebrow">DXF / CNC</span><h1>SliceNest</h1></div>
-      <p>Découpez un volume 3D et imbriquez ses tranches sur vos panneaux.</p>
+      <p data-i18n="headerDescription">Découpez un volume 3D et imbriquez ses tranches sur vos panneaux.</p>
+      <div class="language-switcher" aria-label="Language selector"><button class="language-button is-active" type="button" data-language="fr">FR</button><button class="language-button" type="button" data-language="en">EN</button></div>
     </header>
     <main>
       <aside class="panel controls">
         <section>
-          <h2>1. Modèles et plans de découpe</h2>
-          <label class="upload" for="stlFile"><span>Importer des fichiers</span><strong id="fileName">Aucun fichier</strong></label>
+          <h2 data-i18n="modelsTitle">1. Modèles et plans de découpe</h2>
+          <label class="upload" for="stlFile"><span data-i18n="importFiles">Importer des fichiers</span><strong id="fileName">Aucun fichier</strong></label>
           <input id="stlFile" type="file" accept=".stl,model/stl" multiple />
           <div id="modelList"></div>
-          <p class="hint">Définissez un axe par modèle. Les unités sont supposées être en millimètres.</p>
+          <p class="hint" data-i18n="modelHint">Définissez un axe par modèle. Les unités sont supposées être en millimètres.</p>
         </section>
         <section>
-          <h2>2. Workpiece</h2>
-          <div class="triple"><label>Largeur<input id="boardWidth" type="number" value="1220" min="1" step="1" /><small>mm</small></label><label>Hauteur<input id="boardHeight" type="number" value="2440" min="1" step="1" /><small>mm</small></label><label>Épaisseur<input id="thickness" type="number" value="18" min="0.01" step="0.1" /><small>mm</small></label></div>
-          <div class="double"><label>Marge panneau<input id="margin" type="number" value="12" min="0" step="0.1" /><small>mm</small></label><label>Diamètre outil<input id="toolDiameter" type="number" value="6" min="0" step="0.1" /><small>mm</small></label></div>
-          <p class="hint">La distance minimale entre pièces est égale au diamètre de l'outil.</p>
+          <h2 data-i18n="workpieceTitle">2. Panneau</h2>
+          <div class="triple"><label><span data-i18n="width">Largeur</span><input id="boardWidth" type="number" value="1220" min="1" step="1" /><small>mm</small></label><label><span data-i18n="height">Hauteur</span><input id="boardHeight" type="number" value="2440" min="1" step="1" /><small>mm</small></label><label><span data-i18n="thickness">Épaisseur</span><input id="thickness" type="number" value="18" min="0.01" step="0.1" /><small>mm</small></label></div>
+          <div class="double"><label><span data-i18n="boardMargin">Marge panneau</span><input id="margin" type="number" value="12" min="0" step="0.1" /><small>mm</small></label><label><span data-i18n="toolDiameter">Diamètre outil</span><input id="toolDiameter" type="number" value="6" min="0" step="0.1" /><small>mm</small></label></div>
+          <p class="hint" data-i18n="spacingHint">La distance minimale entre pièces est égale au diamètre de l'outil.</p>
         </section>
-        <button id="sliceButton" class="primary" disabled>Slice &amp; Nest</button>
-        <p id="status" class="status">Importez un fichier pour commencer.</p>
+        <button id="sliceButton" class="primary" disabled data-i18n="sliceAndNest">Découper et imbriquer</button>
+        <p id="status" class="status" data-i18n="startStatus">Importez un fichier pour commencer.</p>
       </aside>
       <section class="workspace">
-        <div class="panel model-view"><div class="preview-head"><div><h2>Aperçu 3D des tranches</h2><p class="hint">Sélectionnez un modèle à isoler dans la liste. Glissez pour tourner, utilisez la molette pour zoomer.</p></div><button id="fitViewButton" type="button">Cadrer le modèle</button></div><div id="modelViewer" aria-label="Vue 3D du modèle"><p id="viewerEmpty">Importez un fichier pour afficher sa prévisualisation 3D.</p></div></div>
+        <div class="panel model-view"><div class="preview-head"><div><h2 data-i18n="previewTitle">Aperçu 3D des tranches</h2><p class="hint" data-i18n="previewHint">Sélectionnez un modèle à isoler dans la liste. Glissez pour tourner, utilisez la molette pour zoomer.</p></div><button id="fitViewButton" type="button" data-i18n="fitModel">Cadrer le modèle</button></div><div id="modelViewer" aria-label="Vue 3D du modèle"><p id="viewerEmpty" data-i18n="viewerEmpty">Importez un fichier pour afficher sa prévisualisation 3D.</p></div></div>
         <div id="sliceResults" hidden>
-          <div class="metrics" id="metrics"><div><span>Tranches</span><strong>-</strong></div><div><span>Panneaux</span><strong>-</strong></div><div><span>Utilisation</span><strong>-</strong></div></div>
-          <div class="panel preview"><div class="preview-head"><div><h2>Disposition des workpieces</h2><p class="hint">Molette pour zoomer, glissez pour déplacer la vue. Un DXF sera généré par panneau.</p></div><div class="preview-actions"><button id="fitNestButton" type="button">Recadrer</button><button id="downloadButton" disabled>Exporter les DXF</button></div></div><canvas id="nestCanvas" width="1200" height="700" aria-label="Disposition détaillée des tranches sur les workpieces"></canvas></div>
-          <div class="panel slices"><h2>Tranches générées</h2><div id="sliceList" class="slice-list"><p class="empty">Aucune tranche calculée.</p></div></div>
+          <div class="metrics" id="metrics"><div><span data-i18n="slices">Tranches</span><strong>-</strong></div><div><span data-i18n="boards">Panneaux</span><strong>-</strong></div><div><span data-i18n="usage">Utilisation</span><strong>-</strong></div></div>
+          <div class="panel preview"><div class="preview-head"><div><h2 data-i18n="layoutTitle">Disposition des panneaux</h2><p class="hint" data-i18n="layoutHint">Molette pour zoomer, glissez pour déplacer la vue. Un DXF sera généré par panneau.</p></div><div class="preview-actions"><button id="fitNestButton" type="button" data-i18n="fitView">Recadrer</button><button id="downloadButton" disabled data-i18n="exportDxf">Exporter les DXF</button></div></div><canvas id="nestCanvas" width="1200" height="700" aria-label="Detailed slice layout on workpieces"></canvas></div>
+          <div class="panel slices"><h2 data-i18n="generatedSlices">Tranches générées</h2><div id="sliceList" class="slice-list"><p class="empty" data-i18n="noSlices">Aucune tranche calculée.</p></div></div>
         </div>
       </section>
     </main>

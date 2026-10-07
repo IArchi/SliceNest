@@ -3,6 +3,14 @@
 const $ = (id) => document.getElementById(id);
 const state = { models: [], previewModelId: null, sourceSlices: [], disabledSlices: new Set(), result: null, viewer: null, nestView: null, nextModelId: 1 };
 const canvas = $("nestCanvas"), ctx = canvas.getContext("2d");
+const translations = {
+  fr: { headerDescription: "Découpez un volume 3D et imbriquez ses tranches sur vos panneaux.", modelsTitle: "1. Modèles et plans de découpe", importFiles: "Importer des fichiers", noFile: "Aucun fichier", modelHint: "Définissez un axe par modèle. Les unités sont supposées être en millimètres.", workpieceTitle: "2. Panneau", width: "Largeur", height: "Hauteur", thickness: "Épaisseur", boardMargin: "Marge panneau", toolDiameter: "Diamètre outil", spacingHint: "La distance minimale entre pièces est égale au diamètre de l'outil.", sliceAndNest: "Découper et imbriquer", startStatus: "Importez un fichier pour commencer.", previewTitle: "Aperçu 3D des tranches", previewHint: "Sélectionnez un modèle à isoler dans la liste. Glissez pour tourner, utilisez la molette pour zoomer.", fitModel: "Cadrer le modèle", viewerEmpty: "Importez un fichier pour afficher sa prévisualisation 3D.", slices: "Tranches", boards: "Panneaux", usage: "Utilisation", layoutTitle: "Disposition des panneaux", layoutHint: "Molette pour zoomer, glissez pour déplacer la vue. Un DXF sera généré par panneau.", fitView: "Recadrer", exportDxf: "Exporter les DXF", generatedSlices: "Tranches générées", noSlices: "Aucune tranche calculée.", show3d: "Afficher dans la vue 3D", normalAxis: "Axe normal", slice: "tranche", board: "panneau", disabled: "désactivée", selectSlice: "Sélectionnez au moins une tranche pour afficher la disposition.", imported: "fichier(s) importé(s)", trianglesLoaded: "triangles chargés.", importError: "Erreur d'import", invalidAscii: "format ASCII non valide", noFiniteCoordinates: "le fichier ne contient aucune coordonnée finie", noIntersection: "aucune intersection n'a été trouvée", sliceError: "Impossible de découper", noSlicesSelected: "Aucune tranche sélectionnée.", invalidDimensions: "vérifiez les dimensions saisies", invalidCoordinates: "le fichier ne contient aucune coordonnée exploitable", marginTooLarge: "la marge dépasse les dimensions du panneau", doesNotFit: "ne tient pas dans la zone utile du panneau", cannotPlace: "impossible de placer", onNewBoard: "sur un nouveau panneau", panelLabel: "Panneau", metricSlices: "Tranches", metricBoards: "Panneaux", metricUsage: "Utilisation", downloadFile: "slices-panneau" },
+  en: { headerDescription: "Slice a 3D volume and nest its sections on your boards.", modelsTitle: "1. Models and cutting planes", importFiles: "Import files", noFile: "No file", modelHint: "Set an axis for each model. Units are assumed to be millimetres.", workpieceTitle: "2. Workpiece", width: "Width", height: "Height", thickness: "Thickness", boardMargin: "Board margin", toolDiameter: "Tool diameter", spacingHint: "The minimum distance between parts equals the tool diameter.", sliceAndNest: "Slice & Nest", startStatus: "Import a file to get started.", previewTitle: "3D slice preview", previewHint: "Select a model to isolate from the list. Drag to rotate and use the wheel to zoom.", fitModel: "Fit model", viewerEmpty: "Import a file to display its 3D preview.", slices: "Slices", boards: "Boards", usage: "Usage", layoutTitle: "Board layout", layoutHint: "Use the wheel to zoom and drag to move the view. One DXF will be generated per board.", fitView: "Fit view", exportDxf: "Export DXFs", generatedSlices: "Generated slices", noSlices: "No slices calculated.", show3d: "Show in 3D view", normalAxis: "Normal axis", slice: "slice", board: "board", disabled: "disabled", selectSlice: "Select at least one slice to display the layout.", imported: "file(s) imported", trianglesLoaded: "triangles loaded.", importError: "Import error", invalidAscii: "invalid ASCII format", noFiniteCoordinates: "the file contains no finite coordinates", noIntersection: "no intersections found", sliceError: "Unable to slice", noSlicesSelected: "No slices selected.", invalidDimensions: "check the entered dimensions", invalidCoordinates: "the file contains no usable coordinates", marginTooLarge: "the margin exceeds the board dimensions", doesNotFit: "does not fit within the usable board area", cannotPlace: "unable to place", onNewBoard: "on a new board", panelLabel: "Board", metricSlices: "Slices", metricBoards: "Boards", metricUsage: "Usage", downloadFile: "slices-board" }
+};
+let language = "en";
+const t = (key) => translations[language][key] ?? key;
+function setLanguage(nextLanguage) { language = nextLanguage; document.documentElement.lang = language; document.querySelectorAll("[data-i18n]").forEach((node) => { node.textContent = t(node.dataset.i18n); }); document.querySelectorAll(".language-button").forEach((button) => button.classList.toggle("is-active", button.dataset.language === language)); if (!state.models.length) $("fileName").textContent = t("noFile"); renderModels(); if (state.result) { renderSlices(); renderMetrics(); drawNest(); } }
+document.querySelectorAll(".language-button").forEach((button) => button.addEventListener("click", () => setLanguage(button.dataset.language)));
 
 $("stlFile").addEventListener("change", async (event) => {
   const files = [...event.target.files];
@@ -14,16 +22,16 @@ $("stlFile").addEventListener("change", async (event) => {
     state.result = null;
     state.sourceSlices = [];
     state.disabledSlices.clear();
-    $("fileName").textContent = `${state.models.length} fichier(s) importé(s)`;
+    $("fileName").textContent = `${state.models.length} ${t("imported")}`;
     $("sliceButton").disabled = !state.models.length;
     $("sliceResults").hidden = true;
     $("downloadButton").disabled = true;
     renderModels();
     showModelPreview();
     const triangleCount = imported.reduce((total, model) => total + model.triangles.length, 0);
-    setStatus(`${imported.length} fichier(s) importé(s), ${triangleCount.toLocaleString("fr-FR")} triangles chargés.`);
+    setStatus(`${imported.length} ${t("imported")}, ${triangleCount.toLocaleString(language === "fr" ? "fr-FR" : "en-US")} ${t("trianglesLoaded")}`);
     event.target.value = "";
-  } catch (error) { setStatus(`Erreur d'import : ${error.message}`, true); }
+  } catch (error) { setStatus(`${t("importError")}: ${error.message}`, true); }
 });
 $("sliceButton").addEventListener("click", sliceAndNest);
 $("downloadButton").addEventListener("click", downloadDxf);
@@ -62,9 +70,9 @@ function parseStl(buffer) {
   }
   const text = new TextDecoder().decode(buffer);
   const vertices = [...text.matchAll(/vertex\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)/gi)].map((match) => [+match[1], +match[2], +match[3]]);
-  if (!vertices.length || vertices.length % 3) throw new Error("format ASCII non valide");
+  if (!vertices.length || vertices.length % 3) throw new Error(t("invalidAscii"));
   const triangles = Array.from({ length: vertices.length / 3 }, (_, i) => vertices.slice(i * 3, i * 3 + 3)).filter((triangle) => triangle.every(isFinitePoint3));
-  if (!triangles.length) throw new Error("le fichier ne contient aucune coordonnée finie");
+  if (!triangles.length) throw new Error(t("noFiniteCoordinates"));
   return triangles;
 }
 
@@ -72,13 +80,13 @@ function sliceAndNest() {
   try {
     const settings = settingsFromInputs();
     const slices = state.models.flatMap((model) => calculateSlices(model, settings.thickness).slices);
-    if (!slices.length) throw new Error("aucune intersection n'a été trouvée");
+    if (!slices.length) throw new Error(t("noIntersection"));
     state.sourceSlices = slices;
     state.disabledSlices.clear();
     recalculateNest(settings);
     $("sliceResults").hidden = false;
     $("downloadButton").disabled = false;
-  } catch (error) { setStatus(`Impossible de découper : ${error.message}`, true); }
+  } catch (error) { setStatus(`${t("sliceError")}: ${error.message}`, true); }
 }
 
 function recalculateNest(settings = state.result?.settings) {
@@ -86,14 +94,14 @@ function recalculateNest(settings = state.result?.settings) {
   if (!activeSlices.length) {
     state.result = { slices: [], boards: [], settings };
     drawNest(); renderSlices(); renderMetrics();
-    setStatus("Aucune tranche sélectionnée.");
+    setStatus(t("noSlicesSelected"));
     return;
   }
   const placed = nestSlices(activeSlices, settings);
   state.result = { slices: placed.slices, boards: placed.boards, settings };
   fitNestView();
   drawNest(); renderSlices(); renderMetrics();
-  setStatus(`${activeSlices.length} tranche(s) répartie(s) sur ${placed.boards.length} panneau(x).`);
+  setStatus(`${activeSlices.length} ${t("slices").toLowerCase()} ${language === "fr" ? "répartie(s) sur" : "distributed across"} ${placed.boards.length} ${t("boards").toLowerCase()}.`);
 }
 
 function calculateSlices(model, thickness) {
@@ -216,7 +224,7 @@ function updatePreviewVisibility() {
 function settingsFromInputs() {
   const get = (id) => Number($(id).value);
   const settings = { width: get("boardWidth"), height: get("boardHeight"), thickness: get("thickness"), margin: get("margin"), tool: get("toolDiameter") };
-  if (Object.values(settings).some((value) => !Number.isFinite(value)) || settings.width <= 0 || settings.height <= 0 || settings.thickness <= 0 || settings.margin < 0 || settings.tool < 0) throw new Error("vérifiez les dimensions saisies");
+  if (Object.values(settings).some((value) => !Number.isFinite(value)) || settings.width <= 0 || settings.height <= 0 || settings.thickness <= 0 || settings.margin < 0 || settings.tool < 0) throw new Error(t("invalidDimensions"));
   return settings;
 }
 
@@ -235,7 +243,7 @@ function coordinateRange(triangles, coordinate) {
     min = Math.min(min, value);
     max = Math.max(max, value);
   }
-  if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error("le fichier ne contient aucune coordonnée exploitable");
+  if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error(t("invalidCoordinates"));
   return { min, max };
 }
 function slicePlanePositions(min, max, thickness, includeTerminal = false) {
@@ -270,10 +278,10 @@ function segmentBounds(segments) {
 
 function nestSlices(slices, s) {
   const gap = s.tool, usableW = s.width - 2 * s.margin, usableH = s.height - 2 * s.margin, tolerance = 1e-6;
-  if (usableW <= 0 || usableH <= 0) throw new Error("la marge dépasse les dimensions du panneau");
+  if (usableW <= 0 || usableH <= 0) throw new Error(t("marginTooLarge"));
   const fits = (w, h) => w <= usableW + tolerance && h <= usableH + tolerance;
-  const sliceLabel = (slice) => `${slice.modelName} · tranche ${slice.number}`;
-  const sliceTooLarge = (slice) => `${sliceLabel(slice)} (${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm) ne tient pas dans la zone utile du panneau (${usableW.toFixed(1)} x ${usableH.toFixed(1)} mm)`;
+  const sliceLabel = (slice) => `${slice.modelName} · ${t("slice")} ${slice.number}`;
+  const sliceTooLarge = (slice) => `${sliceLabel(slice)} (${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm) ${t("doesNotFit")} (${usableW.toFixed(1)} x ${usableH.toFixed(1)} mm)`;
   const sorted = [...slices].sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height));
   const boards = [];
   for (const slice of sorted) {
@@ -286,7 +294,7 @@ function nestSlices(slices, s) {
       const variant = variants.find((v) => fits(v.w, v.h));
       if (!variant) throw new Error(sliceTooLarge(slice));
       const pos = board.find(variant.w, variant.h, gap);
-      if (!pos) throw new Error(`impossible de placer ${sliceLabel(slice)} sur un nouveau panneau`);
+      if (!pos) throw new Error(`${t("cannotPlace")} ${sliceLabel(slice)} ${t("onNewBoard")}`);
       boards.push(board);
       choice = { board, variant, pos };
     }
@@ -311,11 +319,11 @@ function drawNest() {
   const point = (x, y) => [view.x + x * view.scale, view.y + (layout.height - y) * view.scale];
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#f4f6f3"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (!boards.length) { ctx.fillStyle = "#68747b"; ctx.font = "14px system-ui"; ctx.textAlign = "center"; ctx.fillText("Sélectionnez au moins une tranche pour afficher la disposition.", canvas.width / 2, canvas.height / 2); ctx.textAlign = "start"; return; }
+  if (!boards.length) { ctx.fillStyle = "#68747b"; ctx.font = "14px system-ui"; ctx.textAlign = "center"; ctx.fillText(t("selectSlice"), canvas.width / 2, canvas.height / 2); ctx.textAlign = "start"; return; }
   boards.forEach((board, index) => {
     const [ox, oy] = layout.origin(index), [left, top] = point(ox, oy + settings.height), boardW = settings.width * view.scale, boardH = settings.height * view.scale;
     ctx.fillStyle = "#fff"; ctx.strokeStyle = "#48605c"; ctx.lineWidth = 1; ctx.fillRect(left, top, boardW, boardH); ctx.strokeRect(left, top, boardW, boardH);
-    ctx.fillStyle = "#40504e"; ctx.font = "600 12px system-ui"; ctx.fillText(`Panneau ${index + 1}`, left + 8, top + 17);
+    ctx.fillStyle = "#40504e"; ctx.font = "600 12px system-ui"; ctx.fillText(`${t("panelLabel")} ${index + 1}`, left + 8, top + 17);
   });
   ctx.strokeStyle = "#c23d24"; ctx.lineWidth = Math.max(.75, Math.min(2, view.scale * .45)); ctx.lineJoin = "round"; ctx.lineCap = "round";
   slices.forEach((slice) => {
@@ -347,9 +355,9 @@ function installNestControls() {
   canvas.addEventListener("pointermove", (event) => { if (!drag) return; const [x, y] = position(event); state.nestView.x = drag.viewX + x - drag.x; state.nestView.y = drag.viewY + y - drag.y; drawNest(); });
   canvas.addEventListener("pointerup", () => { drag = null; });
 }
-function renderModels() { $("modelList").innerHTML = state.models.map((model) => `<article class="model-card"><strong>${escapeHtml(model.name)}</strong><label class="model-preview-label"><input class="model-preview" type="radio" name="previewModel" value="${model.id}" ${model.id === state.previewModelId ? "checked" : ""} />Afficher dans la vue 3D</label><label>Axe normal<select class="model-axis" data-model-id="${model.id}"><option value="z" ${model.axis === "z" ? "selected" : ""}>XY · normal Z</option><option value="y" ${model.axis === "y" ? "selected" : ""}>XZ · normal Y</option><option value="x" ${model.axis === "x" ? "selected" : ""}>YZ · normal X</option></select></label></article>`).join(""); }
-function renderSlices() { $("sliceList").innerHTML = state.sourceSlices.map((slice) => { const active = !state.disabledSlices.has(slice.key), placed = state.result.slices.find((item) => item.key === slice.key); return `<article class="slice-card${active ? "" : " is-disabled"}"><label><input class="slice-toggle" type="checkbox" value="${slice.key}" ${active ? "checked" : ""} /><strong>${escapeHtml(slice.modelName)} · tranche ${slice.number}</strong></label><span>${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm${placed ? ` · panneau ${placed.board + 1}` : " · désactivée"}</span></article>`; }).join(""); }
-function renderMetrics() { const { slices, boards, settings } = state.result, used = slices.reduce((sum, slice) => sum + slice.width * slice.height, 0), total = boards.length * settings.width * settings.height; $("metrics").innerHTML = `<div><span>Tranches</span><strong>${slices.length}</strong></div><div><span>Panneaux</span><strong>${boards.length}</strong></div><div><span>Utilisation</span><strong>${total ? (used / total * 100).toFixed(1) : "-"}%</strong></div>`; }
+function renderModels() { $("modelList").innerHTML = state.models.map((model) => `<article class="model-card"><strong>${escapeHtml(model.name)}</strong><label class="model-preview-label"><input class="model-preview" type="radio" name="previewModel" value="${model.id}" ${model.id === state.previewModelId ? "checked" : ""} />${t("show3d")}</label><label>${t("normalAxis")}<select class="model-axis" data-model-id="${model.id}"><option value="z" ${model.axis === "z" ? "selected" : ""}>XY · normal Z</option><option value="y" ${model.axis === "y" ? "selected" : ""}>XZ · normal Y</option><option value="x" ${model.axis === "x" ? "selected" : ""}>YZ · normal X</option></select></label></article>`).join(""); }
+function renderSlices() { $("sliceList").innerHTML = state.sourceSlices.map((slice) => { const active = !state.disabledSlices.has(slice.key), placed = state.result.slices.find((item) => item.key === slice.key); return `<article class="slice-card${active ? "" : " is-disabled"}"><label><input class="slice-toggle" type="checkbox" value="${slice.key}" ${active ? "checked" : ""} /><strong>${escapeHtml(slice.modelName)} · ${t("slice")} ${slice.number}</strong></label><span>${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm${placed ? ` · ${t("board")} ${placed.board + 1}` : ` · ${t("disabled")}`}</span></article>`; }).join(""); }
+function renderMetrics() { const { slices, boards, settings } = state.result, used = slices.reduce((sum, slice) => sum + slice.width * slice.height, 0), total = boards.length * settings.width * settings.height; $("metrics").innerHTML = `<div><span>${t("metricSlices")}</span><strong>${slices.length}</strong></div><div><span>${t("metricBoards")}</span><strong>${boards.length}</strong></div><div><span>${t("metricUsage")}</span><strong>${total ? (used / total * 100).toFixed(1) : "-"}%</strong></div>`; }
 function downloadDxf() {
   const { slices, boards } = state.result;
   boards.forEach((_, boardIndex) => {
@@ -368,7 +376,7 @@ function downloadDxf() {
     const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "application/dxf" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `slices-panneau-${boardIndex + 1}.dxf`;
+    link.download = `${t("downloadFile")}-${boardIndex + 1}.dxf`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
   });
