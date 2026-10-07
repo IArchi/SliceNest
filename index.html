@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SliceNest - STL vers DXF</title>
+    <title>SliceNest - Export DXF</title>
     <link rel="stylesheet" href="./style.css" />
     <style>
       .preview-actions { display: flex; gap: 8px; align-items: start; }
@@ -15,39 +15,42 @@
       .slice-card label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
       .slice-card input.slice-toggle { width: auto; margin: 0; accent-color: var(--teal); }
       .slice-card.is-disabled { opacity: .52; }
+      .model-card { padding: 10px 0; border-top: 1px solid var(--line); }
+      .model-card:first-child { padding-top: 0; border-top: 0; }
+      .model-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--teal); }
+      .model-card select { margin-top: 5px; }
+      .model-card .model-preview { width: auto; margin: 0; accent-color: var(--teal); }
+      .model-card .model-preview-label { display: flex; align-items: center; gap: 7px; margin-top: 9px; cursor: pointer; }
     </style>
   </head>
   <body>
     <header>
-      <div><span class="eyebrow">STL / DXF / CNC</span><h1>SliceNest</h1></div>
+      <div><span class="eyebrow">DXF / CNC</span><h1>SliceNest</h1></div>
       <p>Découpez un volume 3D et imbriquez ses tranches sur vos panneaux.</p>
     </header>
     <main>
       <aside class="panel controls">
         <section>
-          <h2>1. Modèle</h2>
-          <label class="upload" for="stlFile"><span>Importer un fichier STL</span><strong id="fileName">Aucun fichier</strong></label>
-          <input id="stlFile" type="file" accept=".stl,model/stl" />
-          <p class="hint">Les unités du STL sont supposées être en millimètres.</p>
+          <h2>1. Modèles et plans de découpe</h2>
+          <label class="upload" for="stlFile"><span>Importer des fichiers</span><strong id="fileName">Aucun fichier</strong></label>
+          <input id="stlFile" type="file" accept=".stl,model/stl" multiple />
+          <div id="modelList"></div>
+          <p class="hint">Définissez un axe par modèle. Les unités sont supposées être en millimètres.</p>
         </section>
         <section>
-          <h2>2. Plan de découpe</h2>
-          <label>Axe normal<select id="sliceAxis"><option value="z">XY · normal Z</option><option value="y">XZ · normal Y</option><option value="x">YZ · normal X</option></select></label>
-        </section>
-        <section>
-          <h2>3. Workpiece</h2>
+          <h2>2. Workpiece</h2>
           <div class="triple"><label>Largeur<input id="boardWidth" type="number" value="1220" min="1" step="1" /><small>mm</small></label><label>Hauteur<input id="boardHeight" type="number" value="2440" min="1" step="1" /><small>mm</small></label><label>Épaisseur<input id="thickness" type="number" value="18" min="0.01" step="0.1" /><small>mm</small></label></div>
           <div class="double"><label>Marge panneau<input id="margin" type="number" value="12" min="0" step="0.1" /><small>mm</small></label><label>Diamètre outil<input id="toolDiameter" type="number" value="6" min="0" step="0.1" /><small>mm</small></label></div>
           <p class="hint">La distance minimale entre pièces est égale au diamètre de l'outil.</p>
         </section>
         <button id="sliceButton" class="primary" disabled>Slice &amp; Nest</button>
-        <p id="status" class="status">Importez un STL pour commencer.</p>
+        <p id="status" class="status">Importez un fichier pour commencer.</p>
       </aside>
       <section class="workspace">
-        <div class="panel model-view"><div class="preview-head"><div><h2>Aperçu 3D des tranches</h2><p class="hint">Glissez pour tourner, utilisez la molette pour zoomer. Les plans orange représentent les slices qui seront produites.</p></div><button id="fitViewButton" type="button">Cadrer le modèle</button></div><div id="modelViewer" aria-label="Vue 3D du modèle STL"><p id="viewerEmpty">Importez un STL pour afficher sa prévisualisation 3D.</p></div></div>
+        <div class="panel model-view"><div class="preview-head"><div><h2>Aperçu 3D des tranches</h2><p class="hint">Sélectionnez un modèle à isoler dans la liste. Glissez pour tourner, utilisez la molette pour zoomer.</p></div><button id="fitViewButton" type="button">Cadrer le modèle</button></div><div id="modelViewer" aria-label="Vue 3D du modèle"><p id="viewerEmpty">Importez un fichier pour afficher sa prévisualisation 3D.</p></div></div>
         <div id="sliceResults" hidden>
           <div class="metrics" id="metrics"><div><span>Tranches</span><strong>-</strong></div><div><span>Panneaux</span><strong>-</strong></div><div><span>Utilisation</span><strong>-</strong></div></div>
-          <div class="panel preview"><div class="preview-head"><div><h2>Disposition des workpieces</h2><p class="hint">Molette pour zoomer, glissez pour déplacer la vue. Les contours correspondent au DXF exporté.</p></div><div class="preview-actions"><button id="fitNestButton" type="button">Recadrer</button><button id="downloadButton" disabled>Exporter DXF</button></div></div><canvas id="nestCanvas" width="1200" height="700" aria-label="Disposition détaillée des tranches sur les workpieces"></canvas></div>
+          <div class="panel preview"><div class="preview-head"><div><h2>Disposition des workpieces</h2><p class="hint">Molette pour zoomer, glissez pour déplacer la vue. Un DXF sera généré par panneau.</p></div><div class="preview-actions"><button id="fitNestButton" type="button">Recadrer</button><button id="downloadButton" disabled>Exporter les DXF</button></div></div><canvas id="nestCanvas" width="1200" height="700" aria-label="Disposition détaillée des tranches sur les workpieces"></canvas></div>
           <div class="panel slices"><h2>Tranches générées</h2><div id="sliceList" class="slice-list"><p class="empty">Aucune tranche calculée.</p></div></div>
         </div>
       </section>

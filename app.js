@@ -1,34 +1,49 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const state = { triangles: [], sourceSlices: [], disabledSlices: new Set(), result: null, viewer: null, nestView: null };
+const state = { models: [], previewModelId: null, sourceSlices: [], disabledSlices: new Set(), result: null, viewer: null, nestView: null, nextModelId: 1 };
 const canvas = $("nestCanvas"), ctx = canvas.getContext("2d");
 
 $("stlFile").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
+  const files = [...event.target.files];
+  if (!files.length) return;
   try {
-    state.triangles = parseStl(await file.arrayBuffer());
+    const imported = await Promise.all(files.map(async (file) => ({ id: state.nextModelId++, name: displayName(file.name), triangles: parseStl(await file.arrayBuffer()), axis: "z" })));
+    state.models.push(...imported);
+    if (state.previewModelId === null) state.previewModelId = imported[0].id;
     state.result = null;
     state.sourceSlices = [];
     state.disabledSlices.clear();
-    $("fileName").textContent = file.name;
-    $("sliceButton").disabled = !state.triangles.length;
+    $("fileName").textContent = `${state.models.length} fichier(s) importé(s)`;
+    $("sliceButton").disabled = !state.models.length;
     $("sliceResults").hidden = true;
     $("downloadButton").disabled = true;
+    renderModels();
     showModelPreview();
-    setStatus(`${state.triangles.length.toLocaleString("fr-FR")} triangles chargés.`);
-  } catch (error) { setStatus(`Erreur STL : ${error.message}`, true); }
+    const triangleCount = imported.reduce((total, model) => total + model.triangles.length, 0);
+    setStatus(`${imported.length} fichier(s) importé(s), ${triangleCount.toLocaleString("fr-FR")} triangles chargés.`);
+    event.target.value = "";
+  } catch (error) { setStatus(`Erreur d'import : ${error.message}`, true); }
 });
 $("sliceButton").addEventListener("click", sliceAndNest);
 $("downloadButton").addEventListener("click", downloadDxf);
 $("fitViewButton").addEventListener("click", () => state.viewer?.fit());
 $("fitNestButton").addEventListener("click", () => { if (state.result) { fitNestView(); drawNest(); } });
-document.querySelectorAll("#sliceAxis, #thickness").forEach((input) => input.addEventListener("input", refreshSlicePreview));
+$("thickness").addEventListener("input", refreshSlicePreview);
+$("modelList").addEventListener("change", (event) => {
+  if (event.target.matches(".model-preview")) {
+    state.previewModelId = Number(event.target.value);
+    updatePreviewVisibility();
+    return;
+  }
+  if (!event.target.matches(".model-axis")) return;
+  const model = state.models.find((item) => item.id === Number(event.target.dataset.modelId));
+  if (model) { model.axis = event.target.value; refreshSlicePreview(); }
+});
 $("sliceList").addEventListener("change", (event) => {
   if (!event.target.matches(".slice-toggle")) return;
-  const number = Number(event.target.value);
-  if (event.target.checked) state.disabledSlices.delete(number); else state.disabledSlices.add(number);
+  const key = event.target.value;
+  if (event.target.checked) state.disabledSlices.delete(key); else state.disabledSlices.add(key);
   recalculateNest();
 });
 installNestControls();
@@ -49,14 +64,14 @@ function parseStl(buffer) {
   const vertices = [...text.matchAll(/vertex\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)/gi)].map((match) => [+match[1], +match[2], +match[3]]);
   if (!vertices.length || vertices.length % 3) throw new Error("format ASCII non valide");
   const triangles = Array.from({ length: vertices.length / 3 }, (_, i) => vertices.slice(i * 3, i * 3 + 3)).filter((triangle) => triangle.every(isFinitePoint3));
-  if (!triangles.length) throw new Error("le STL ne contient aucune coordonnée finie");
+  if (!triangles.length) throw new Error("le fichier ne contient aucune coordonnée finie");
   return triangles;
 }
 
 function sliceAndNest() {
   try {
     const settings = settingsFromInputs();
-    const { slices } = calculateSlices(settings.thickness);
+    const slices = state.models.flatMap((model) => calculateSlices(model, settings.thickness).slices);
     if (!slices.length) throw new Error("aucune intersection n'a été trouvée");
     state.sourceSlices = slices;
     state.disabledSlices.clear();
@@ -67,7 +82,7 @@ function sliceAndNest() {
 }
 
 function recalculateNest(settings = state.result?.settings) {
-  const activeSlices = state.sourceSlices.filter((slice) => !state.disabledSlices.has(slice.number));
+  const activeSlices = state.sourceSlices.filter((slice) => !state.disabledSlices.has(slice.key));
   if (!activeSlices.length) {
     state.result = { slices: [], boards: [], settings };
     drawNest(); renderSlices(); renderMetrics();
@@ -81,9 +96,9 @@ function recalculateNest(settings = state.result?.settings) {
   setStatus(`${activeSlices.length} tranche(s) répartie(s) sur ${placed.boards.length} panneau(x).`);
 }
 
-function calculateSlices(thickness) {
-  const basis = getBasis();
-  const localTriangles = state.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
+function calculateSlices(model, thickness) {
+  const basis = getBasis(model.axis);
+  const localTriangles = model.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
   const { min: minZ, max: maxZ } = coordinateRange(localTriangles, 2);
   const slices = [];
   // Start at the far model face. Offset imperceptibly inside the mesh so coplanar STL faces intersect reliably.
@@ -94,7 +109,7 @@ function calculateSlices(thickness) {
     const segments = localTriangles.map((triangle) => intersectionSegment(triangle, z)).filter(isFiniteSegment);
     if (!segments.length) continue;
     const bounds = segmentBounds(segments);
-    if (bounds) slices.push({ number, z, segments, ...bounds });
+    if (bounds) slices.push({ key: `${model.id}:${number}`, modelId: model.id, modelName: model.name, number, z, segments, ...bounds });
   }
   return { basis, slices };
 }
@@ -103,18 +118,17 @@ function showModelPreview() {
   const container = $("modelViewer");
   container.replaceChildren();
   const viewer = state.viewer = createViewer(container);
-  const positions = new Float32Array(state.triangles.flat(2));
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.computeVertexNormals();
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x168b84, transparent: true, opacity: .31, side: THREE.DoubleSide, depthWrite: false }));
-  viewer.model.add(mesh);
-  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 25), new THREE.LineBasicMaterial({ color: 0x105752, transparent: true, opacity: .33 }));
-  viewer.model.add(edges);
-  const box = new THREE.Box3().setFromObject(viewer.model);
-  viewer.center.copy(box.getCenter(new THREE.Vector3()));
-  viewer.size.copy(box.getSize(new THREE.Vector3()));
-  viewer.fit();
+  state.models.forEach((item, index) => {
+    const group = new THREE.Group();
+    group.name = `model-${item.id}`;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(item.triangles.flat(2)), 3));
+    geometry.computeVertexNormals();
+    const color = [0x168b84, 0x506fc4, 0xbd7d32, 0x9a4d96][index % 4];
+    group.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: .45, side: THREE.DoubleSide, depthWrite: false })));
+    group.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 25), new THREE.LineBasicMaterial({ color, transparent: true, opacity: .45 })));
+    viewer.model.add(group);
+  });
   refreshSlicePreview();
 }
 
@@ -146,37 +160,57 @@ function renderViewer(viewer) {
 }
 
 function refreshSlicePreview() {
-  if (!state.viewer || !state.triangles.length) return;
+  if (!state.viewer || !state.models.length) return;
   const viewer = state.viewer;
   viewer.planes.clear();
   try {
     const thickness = Number($("thickness").value);
     if (!(thickness > 0)) return;
-    const basis = getBasis();
-    const localTriangles = state.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
-    const { min: minZ, max: maxZ } = coordinateRange(localTriangles, 2);
-    const { min: minU, max: maxU } = coordinateRange(localTriangles, 0);
-    const { min: minV, max: maxV } = coordinateRange(localTriangles, 1);
-    const planes = slicePlanePositions(minZ, maxZ, thickness, true);
-    const count = planes.length;
-    const displayEvery = Math.max(1, Math.ceil(count / 80));
-    const normal = new THREE.Vector3(...basis.normal);
-    const width = maxU - minU, height = maxV - minV;
-    const planeGeometry = new THREE.PlaneGeometry(width, height);
-    const material = new THREE.MeshBasicMaterial({ color: 0xf25a38, transparent: true, opacity: .11, side: THREE.DoubleSide, depthWrite: false });
-    const outlineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-width / 2, -height / 2, 0), new THREE.Vector3(width / 2, -height / 2, 0), new THREE.Vector3(width / 2, height / 2, 0), new THREE.Vector3(-width / 2, height / 2, 0), new THREE.Vector3(-width / 2, -height / 2, 0)]);
-    for (let index = 0; index < count; index += displayEvery) {
-      const z = planes[index];
-      const position = add(add(add(basis.origin, scale(basis.u, (minU + maxU) / 2)), scale(basis.v, (minV + maxV) / 2)), scale(basis.normal, z));
-      const group = new THREE.Group();
-      group.position.set(...position);
-      group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
-      group.add(new THREE.Mesh(planeGeometry, material));
-      group.add(new THREE.Line(outlineGeometry, new THREE.LineBasicMaterial({ color: 0xe14b2b, transparent: true, opacity: .45 })));
-      viewer.planes.add(group);
-    }
-    renderViewer(viewer);
+    state.models.forEach((model) => addSlicePlanes(viewer, model, thickness));
+    updatePreviewVisibility();
   } catch { /* The form may be temporarily incomplete while the user is editing. */ }
+}
+function addSlicePlanes(viewer, model, thickness) {
+  const basis = getBasis(model.axis);
+  const localTriangles = model.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
+  const { min: minZ, max: maxZ } = coordinateRange(localTriangles, 2);
+  const { min: minU, max: maxU } = coordinateRange(localTriangles, 0);
+  const { min: minV, max: maxV } = coordinateRange(localTriangles, 1);
+  const planes = slicePlanePositions(minZ, maxZ, thickness, true);
+  const count = planes.length;
+  const displayEvery = Math.max(1, Math.ceil(count / 80));
+  const normal = new THREE.Vector3(...basis.normal);
+  const planeGroup = new THREE.Group();
+  planeGroup.name = `planes-${model.id}`;
+  const width = maxU - minU, height = maxV - minV;
+  const planeGeometry = new THREE.PlaneGeometry(width, height);
+  const material = new THREE.MeshBasicMaterial({ color: 0xf25a38, transparent: true, opacity: .11, side: THREE.DoubleSide, depthWrite: false });
+  const outlineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-width / 2, -height / 2, 0), new THREE.Vector3(width / 2, -height / 2, 0), new THREE.Vector3(width / 2, height / 2, 0), new THREE.Vector3(-width / 2, height / 2, 0), new THREE.Vector3(-width / 2, -height / 2, 0)]);
+  for (let index = 0; index < count; index += displayEvery) {
+    const z = planes[index];
+    const position = add(add(add(basis.origin, scale(basis.u, (minU + maxU) / 2)), scale(basis.v, (minV + maxV) / 2)), scale(basis.normal, z));
+    const group = new THREE.Group();
+    group.position.set(...position);
+    group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+    group.add(new THREE.Mesh(planeGeometry, material));
+    group.add(new THREE.Line(outlineGeometry, new THREE.LineBasicMaterial({ color: 0xe14b2b, transparent: true, opacity: .45 })));
+    planeGroup.add(group);
+  }
+  viewer.planes.add(planeGroup);
+}
+
+function updatePreviewVisibility() {
+  const viewer = state.viewer;
+  if (!viewer || state.previewModelId === null) return;
+  const modelGroup = viewer.model.getObjectByName(`model-${state.previewModelId}`);
+  viewer.model.children.forEach((group) => { group.visible = group === modelGroup; });
+  const planeGroup = viewer.planes.getObjectByName(`planes-${state.previewModelId}`);
+  viewer.planes.children.forEach((group) => { group.visible = group === planeGroup; });
+  if (!modelGroup) return;
+  const box = new THREE.Box3().setFromObject(modelGroup);
+  viewer.center.copy(box.getCenter(new THREE.Vector3()));
+  viewer.size.copy(box.getSize(new THREE.Vector3()));
+  viewer.fit();
 }
 
 function settingsFromInputs() {
@@ -186,8 +220,7 @@ function settingsFromInputs() {
   return settings;
 }
 
-function getBasis() {
-  const axis = $("sliceAxis").value;
+function getBasis(axis) {
   const normal = axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];
   const origin = [0, 0, 0];
   const helper = Math.abs(normal[2]) < .9 ? [0, 0, 1] : [0, 1, 0];
@@ -202,7 +235,7 @@ function coordinateRange(triangles, coordinate) {
     min = Math.min(min, value);
     max = Math.max(max, value);
   }
-  if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error("le STL ne contient aucune coordonnée exploitable");
+  if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error("le fichier ne contient aucune coordonnée exploitable");
   return { min, max };
 }
 function slicePlanePositions(min, max, thickness, includeTerminal = false) {
@@ -239,7 +272,8 @@ function nestSlices(slices, s) {
   const gap = s.tool, usableW = s.width - 2 * s.margin, usableH = s.height - 2 * s.margin, tolerance = 1e-6;
   if (usableW <= 0 || usableH <= 0) throw new Error("la marge dépasse les dimensions du panneau");
   const fits = (w, h) => w <= usableW + tolerance && h <= usableH + tolerance;
-  const sliceTooLarge = (slice) => `la tranche ${slice.number} (${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm) ne tient pas dans la zone utile du panneau (${usableW.toFixed(1)} x ${usableH.toFixed(1)} mm)`;
+  const sliceLabel = (slice) => `${slice.modelName} · tranche ${slice.number}`;
+  const sliceTooLarge = (slice) => `${sliceLabel(slice)} (${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm) ne tient pas dans la zone utile du panneau (${usableW.toFixed(1)} x ${usableH.toFixed(1)} mm)`;
   const sorted = [...slices].sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height));
   const boards = [];
   for (const slice of sorted) {
@@ -252,7 +286,7 @@ function nestSlices(slices, s) {
       const variant = variants.find((v) => fits(v.w, v.h));
       if (!variant) throw new Error(sliceTooLarge(slice));
       const pos = board.find(variant.w, variant.h, gap);
-      if (!pos) throw new Error(`impossible de placer la tranche ${slice.number} sur un nouveau panneau`);
+      if (!pos) throw new Error(`impossible de placer ${sliceLabel(slice)} sur un nouveau panneau`);
       boards.push(board);
       choice = { board, variant, pos };
     }
@@ -313,8 +347,33 @@ function installNestControls() {
   canvas.addEventListener("pointermove", (event) => { if (!drag) return; const [x, y] = position(event); state.nestView.x = drag.viewX + x - drag.x; state.nestView.y = drag.viewY + y - drag.y; drawNest(); });
   canvas.addEventListener("pointerup", () => { drag = null; });
 }
-function renderSlices() { $("sliceList").innerHTML = state.sourceSlices.map((slice) => { const active = !state.disabledSlices.has(slice.number), placed = state.result.slices.find((item) => item.number === slice.number); return `<article class="slice-card${active ? "" : " is-disabled"}"><label><input class="slice-toggle" type="checkbox" value="${slice.number}" ${active ? "checked" : ""} /><strong>Tranche ${slice.number}</strong></label><span>${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm${placed ? ` · panneau ${placed.board + 1}` : " · désactivée"}</span></article>`; }).join(""); }
+function renderModels() { $("modelList").innerHTML = state.models.map((model) => `<article class="model-card"><strong>${escapeHtml(model.name)}</strong><label class="model-preview-label"><input class="model-preview" type="radio" name="previewModel" value="${model.id}" ${model.id === state.previewModelId ? "checked" : ""} />Afficher dans la vue 3D</label><label>Axe normal<select class="model-axis" data-model-id="${model.id}"><option value="z" ${model.axis === "z" ? "selected" : ""}>XY · normal Z</option><option value="y" ${model.axis === "y" ? "selected" : ""}>XZ · normal Y</option><option value="x" ${model.axis === "x" ? "selected" : ""}>YZ · normal X</option></select></label></article>`).join(""); }
+function renderSlices() { $("sliceList").innerHTML = state.sourceSlices.map((slice) => { const active = !state.disabledSlices.has(slice.key), placed = state.result.slices.find((item) => item.key === slice.key); return `<article class="slice-card${active ? "" : " is-disabled"}"><label><input class="slice-toggle" type="checkbox" value="${slice.key}" ${active ? "checked" : ""} /><strong>${escapeHtml(slice.modelName)} · tranche ${slice.number}</strong></label><span>${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm${placed ? ` · panneau ${placed.board + 1}` : " · désactivée"}</span></article>`; }).join(""); }
 function renderMetrics() { const { slices, boards, settings } = state.result, used = slices.reduce((sum, slice) => sum + slice.width * slice.height, 0), total = boards.length * settings.width * settings.height; $("metrics").innerHTML = `<div><span>Tranches</span><strong>${slices.length}</strong></div><div><span>Panneaux</span><strong>${boards.length}</strong></div><div><span>Utilisation</span><strong>${total ? (used / total * 100).toFixed(1) : "-"}%</strong></div>`; }
-function downloadDxf() { const { slices, settings } = state.result; const lines = ["0","SECTION","2","HEADER","0","ENDSEC","0","SECTION","2","ENTITIES"]; for (const slice of slices) for (const [a, b] of slice.segments) { const transform = (p) => { const x = p[0] - slice.minX, y = p[1] - slice.minY; return slice.rotated ? [slice.x + y, slice.y + slice.width - x] : [slice.x + x, slice.y + y]; }; const p1 = transform(a), p2 = transform(b); lines.push("0","LINE","8",`SLICE_${slice.number}`,"10",p1[0].toFixed(4),"20",p1[1].toFixed(4),"30","0","11",p2[0].toFixed(4),"21",p2[1].toFixed(4),"31","0"); } lines.push("0","ENDSEC","0","EOF"); const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "application/dxf" })); const link = document.createElement("a"); link.href = url; link.download = "slices-nested.dxf"; link.click(); URL.revokeObjectURL(url); }
+function downloadDxf() {
+  const { slices, boards } = state.result;
+  boards.forEach((_, boardIndex) => {
+    const lines = ["0", "SECTION", "2", "HEADER", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES"];
+    slices.filter((slice) => slice.board === boardIndex).forEach((slice) => {
+      for (const [a, b] of slice.segments) {
+        const transform = (p) => {
+          const x = p[0] - slice.minX, y = p[1] - slice.minY;
+          return slice.rotated ? [slice.x + y, slice.y + slice.width - x] : [slice.x + x, slice.y + y];
+        };
+        const p1 = transform(a), p2 = transform(b);
+        lines.push("0", "LINE", "8", `MODEL_${slice.modelId}_SLICE_${slice.number}`, "10", p1[0].toFixed(4), "20", p1[1].toFixed(4), "30", "0", "11", p2[0].toFixed(4), "21", p2[1].toFixed(4), "31", "0");
+      }
+    });
+    lines.push("0", "ENDSEC", "0", "EOF");
+    const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "application/dxf" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `slices-panneau-${boardIndex + 1}.dxf`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  });
+}
 function setStatus(text, error = false) { const node = $("status"); node.textContent = text; node.style.color = error ? "#b83a20" : ""; }
 const isFinitePoint3 = (point) => point.length === 3 && point.every(Number.isFinite); const isFiniteSegment = (segment) => Array.isArray(segment) && segment.length === 2 && segment.every((point) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite)); const sub = (a, b) => a.map((n, i) => n - b[i]); const add = (a, b) => a.map((n, i) => n + b[i]); const scale = (v, factor) => v.map((n) => n * factor); const dot = (a, b) => a.reduce((sum, n, i) => sum + n * b[i], 0); const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; const normalize = (v) => { const length = Math.hypot(...v); return length && Number.isFinite(length) ? v.map((n) => n / length) : null; }; const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
+function displayName(fileName) { return fileName.replace(/\.stl$/i, ""); }
