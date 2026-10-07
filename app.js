@@ -60,8 +60,7 @@ function sliceAndNest() {
 function calculateSlices(thickness) {
   const basis = getBasis();
   const localTriangles = state.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
-  const values = localTriangles.flat().map((point) => point[2]);
-  const minZ = Math.min(...values), maxZ = Math.max(...values);
+  const { min: minZ, max: maxZ } = coordinateRange(localTriangles, 2);
   const slices = [];
   // Slice centers are aligned to the reference plane (local z = 0), including for a free plane.
   const firstCenter = Math.ceil((minZ - thickness / 2) / thickness) * thickness + thickness / 2;
@@ -129,8 +128,7 @@ function refreshSlicePreview() {
     if (!(thickness > 0)) return;
     const basis = getBasis();
     const localTriangles = state.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
-    const values = localTriangles.flat().map((point) => point[2]);
-    const minZ = Math.min(...values), maxZ = Math.max(...values);
+    const { min: minZ, max: maxZ } = coordinateRange(localTriangles, 2);
     const firstCenter = Math.ceil((minZ - thickness / 2) / thickness) * thickness + thickness / 2;
     const count = Math.max(0, Math.floor((maxZ - firstCenter) / thickness) + 1);
     const displayEvery = Math.max(1, Math.ceil(count / 80));
@@ -167,6 +165,17 @@ function getBasis() {
   const u = normalize(cross(helper, normal)), v = cross(normal, u);
   return { origin, u, v, normal };
 }
+function coordinateRange(triangles, coordinate) {
+  let min = Infinity, max = -Infinity;
+  for (const triangle of triangles) for (const point of triangle) {
+    const value = point[coordinate];
+    if (!Number.isFinite(value)) continue;
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error("le STL ne contient aucune coordonnée exploitable");
+  return { min, max };
+}
 function project(point, basis) { const d = sub(point, basis.origin); return [dot(d, basis.u), dot(d, basis.v), dot(d, basis.normal)]; }
 function intersectionSegment(triangle, z) {
   if (!triangle.every((point) => point.every(Number.isFinite)) || !Number.isFinite(z)) return null;
@@ -180,7 +189,16 @@ function intersectionSegment(triangle, z) {
   const unique = points.filter((point) => point.every(Number.isFinite)).filter((p, i, validPoints) => !validPoints.slice(0, i).some((q) => distance(p, q) < 1e-6));
   return unique.length === 2 ? unique : null;
 }
-function segmentBounds(segments) { const points = segments.flat().filter((point) => point.every(Number.isFinite)); if (!points.length) return null; const minX = Math.min(...points.map((p) => p[0])), maxX = Math.max(...points.map((p) => p[0])), minY = Math.min(...points.map((p) => p[1])), maxY = Math.max(...points.map((p) => p[1])); const bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY }; return Object.values(bounds).every(Number.isFinite) ? bounds : null; }
+function segmentBounds(segments) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const segment of segments) for (const point of segment) {
+    if (!point.every(Number.isFinite)) continue;
+    minX = Math.min(minX, point[0]); maxX = Math.max(maxX, point[0]);
+    minY = Math.min(minY, point[1]); maxY = Math.max(maxY, point[1]);
+  }
+  const bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+  return Object.values(bounds).every(Number.isFinite) ? bounds : null;
+}
 
 function nestSlices(slices, s) {
   const gap = s.tool, usableW = s.width - 2 * s.margin, usableH = s.height - 2 * s.margin, tolerance = 1e-6;
