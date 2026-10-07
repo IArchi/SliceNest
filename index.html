@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SliceNest - STL vers DXF</title>
     <link rel="stylesheet" href="./style.css" />
+    <style>
+      .preview-actions { display: flex; gap: 8px; align-items: start; }
+      #fitNestButton { border: 0; border-radius: 3px; padding: 7px 11px; background: var(--accent); color: #fff; font: 700 12px inherit; cursor: pointer; }
+      #fitNestButton:hover { background: var(--accent-dark); }
+      #fitNestButton:focus-visible { outline: 2px solid #83c5c0; outline-offset: 1px; }
+      #nestCanvas { cursor: grab; touch-action: none; }
+      #nestCanvas:active { cursor: grabbing; }
+      .slice-card label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+      .slice-card input.slice-toggle { width: auto; margin: 0; accent-color: var(--teal); }
+      .slice-card.is-disabled { opacity: .52; }
+    </style>
   </head>
   <body>
     <header>
@@ -36,7 +47,7 @@
         <div class="panel model-view"><div class="preview-head"><div><h2>Aperçu 3D des tranches</h2><p class="hint">Glissez pour tourner, utilisez la molette pour zoomer. Les plans orange représentent les slices qui seront produites.</p></div><button id="fitViewButton" type="button">Cadrer le modèle</button></div><div id="modelViewer" aria-label="Vue 3D du modèle STL"><p id="viewerEmpty">Importez un STL pour afficher sa prévisualisation 3D.</p></div></div>
         <div id="sliceResults" hidden>
           <div class="metrics" id="metrics"><div><span>Tranches</span><strong>-</strong></div><div><span>Panneaux</span><strong>-</strong></div><div><span>Utilisation</span><strong>-</strong></div></div>
-          <div class="panel preview"><div class="preview-head"><h2>Disposition des workpieces</h2><button id="downloadButton" disabled>Exporter DXF</button></div><canvas id="nestCanvas" width="1200" height="700"></canvas><p class="hint">Les formes représentent les enveloppes des contours exportés.</p></div>
+          <div class="panel preview"><div class="preview-head"><div><h2>Disposition des workpieces</h2><p class="hint">Molette pour zoomer, glissez pour déplacer la vue. Les contours correspondent au DXF exporté.</p></div><div class="preview-actions"><button id="fitNestButton" type="button">Recadrer</button><button id="downloadButton" disabled>Exporter DXF</button></div></div><canvas id="nestCanvas" width="1200" height="700" aria-label="Disposition détaillée des tranches sur les workpieces"></canvas></div>
           <div class="panel slices"><h2>Tranches générées</h2><div id="sliceList" class="slice-list"><p class="empty">Aucune tranche calculée.</p></div></div>
         </div>
       </section>

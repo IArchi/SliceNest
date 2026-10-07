@@ -1,7 +1,7 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const state = { triangles: [], result: null, viewer: null };
+const state = { triangles: [], sourceSlices: [], disabledSlices: new Set(), result: null, viewer: null, nestView: null };
 const canvas = $("nestCanvas"), ctx = canvas.getContext("2d");
 
 $("stlFile").addEventListener("change", async (event) => {
@@ -10,6 +10,8 @@ $("stlFile").addEventListener("change", async (event) => {
   try {
     state.triangles = parseStl(await file.arrayBuffer());
     state.result = null;
+    state.sourceSlices = [];
+    state.disabledSlices.clear();
     $("fileName").textContent = file.name;
     $("sliceButton").disabled = !state.triangles.length;
     $("sliceResults").hidden = true;
@@ -21,7 +23,15 @@ $("stlFile").addEventListener("change", async (event) => {
 $("sliceButton").addEventListener("click", sliceAndNest);
 $("downloadButton").addEventListener("click", downloadDxf);
 $("fitViewButton").addEventListener("click", () => state.viewer?.fit());
+$("fitNestButton").addEventListener("click", () => { if (state.result) { fitNestView(); drawNest(); } });
 document.querySelectorAll("#sliceAxis, #thickness").forEach((input) => input.addEventListener("input", refreshSlicePreview));
+$("sliceList").addEventListener("change", (event) => {
+  if (!event.target.matches(".slice-toggle")) return;
+  const number = Number(event.target.value);
+  if (event.target.checked) state.disabledSlices.delete(number); else state.disabledSlices.add(number);
+  recalculateNest();
+});
+installNestControls();
 
 function parseStl(buffer) {
   const view = new DataView(buffer);
@@ -48,13 +58,27 @@ function sliceAndNest() {
     const settings = settingsFromInputs();
     const { slices } = calculateSlices(settings.thickness);
     if (!slices.length) throw new Error("aucune intersection n'a été trouvée");
-    const placed = nestSlices(slices, settings);
-    state.result = { slices: placed.slices, boards: placed.boards, settings };
-    drawNest(); renderSlices(); renderMetrics();
+    state.sourceSlices = slices;
+    state.disabledSlices.clear();
+    recalculateNest(settings);
     $("sliceResults").hidden = false;
     $("downloadButton").disabled = false;
-    setStatus(`${slices.length} tranches réparties sur ${placed.boards.length} panneau(x).`);
   } catch (error) { setStatus(`Impossible de découper : ${error.message}`, true); }
+}
+
+function recalculateNest(settings = state.result?.settings) {
+  const activeSlices = state.sourceSlices.filter((slice) => !state.disabledSlices.has(slice.number));
+  if (!activeSlices.length) {
+    state.result = { slices: [], boards: [], settings };
+    drawNest(); renderSlices(); renderMetrics();
+    setStatus("Aucune tranche sélectionnée.");
+    return;
+  }
+  const placed = nestSlices(activeSlices, settings);
+  state.result = { slices: placed.slices, boards: placed.boards, settings };
+  fitNestView();
+  drawNest(); renderSlices(); renderMetrics();
+  setStatus(`${activeSlices.length} tranche(s) répartie(s) sur ${placed.boards.length} panneau(x).`);
 }
 
 function calculateSlices(thickness) {
@@ -239,13 +263,58 @@ function nestSlices(slices, s) {
 }
 class ShelfBoard { constructor(w, h) { this.w = w; this.h = h; this.shelves = []; } find(w, h, gap) { const tolerance = 1e-6; for (const shelf of this.shelves) if (h <= shelf.h + tolerance && shelf.x + w <= this.w + tolerance) return { x: shelf.x, y: shelf.y, shelf }; const y = this.shelves.length ? this.shelves.at(-1).y + this.shelves.at(-1).h + gap : 0; return y + h <= this.h + tolerance ? { x: 0, y, shelf: null } : null; } add(pos, w, h, gap) { if (pos.shelf) pos.shelf.x += w + gap; else this.shelves.push({ y: pos.y, h, x: w + gap }); } }
 
-function drawNest() {
-  const { boards, slices, settings } = state.result, pad = 30, cols = Math.min(boards.length, 3), scale = Math.min((canvas.width - pad * (cols + 1)) / (cols * settings.width), 220 / settings.height), boardH = settings.height * scale, rows = Math.ceil(boards.length / cols);
-  canvas.height = Math.max(300, Math.ceil(rows * (boardH + 60) + 25)); ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.font = "12px system-ui";
-  boards.forEach((board, index) => { const bx = pad + (index % cols) * (settings.width * scale + pad), by = 25 + Math.floor(index / cols) * (boardH + 60); ctx.fillStyle = "#fff"; ctx.strokeStyle = "#48605c"; ctx.lineWidth = 1; ctx.fillRect(bx, by, settings.width * scale, boardH); ctx.strokeRect(bx, by, settings.width * scale, boardH); ctx.fillStyle = "#40504e"; ctx.fillText(`Panneau ${index + 1}`, bx, by - 8); slices.filter((slice) => slice.board === index).forEach((slice) => { const x = bx + slice.x * scale, y = by + (settings.height - slice.y - (slice.rotated ? slice.width : slice.height)) * scale, w = (slice.rotated ? slice.height : slice.width) * scale, h = (slice.rotated ? slice.width : slice.height) * scale; ctx.fillStyle = "#e95332"; ctx.globalAlpha = .83; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; ctx.fillStyle = "#fff"; ctx.fillText(`#${slice.number}`, x + 5, y + 15); }); });
+function nestLayout() {
+  const { boards, settings } = state.result, cols = Math.max(1, Math.min(boards.length, 2)), gap = Math.max(80, settings.margin * 4), rows = Math.max(1, Math.ceil(boards.length / cols));
+  return { cols, gap, width: cols * settings.width + Math.max(0, cols - 1) * gap, height: rows * settings.height + Math.max(0, rows - 1) * gap, origin: (index) => [index % cols * (settings.width + gap), Math.floor(index / cols) * (settings.height + gap)] };
 }
-function renderSlices() { $("sliceList").innerHTML = state.result.slices.map((slice) => `<article class="slice-card"><strong>Tranche ${slice.number}</strong><span>${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm · panneau ${slice.board + 1}</span></article>`).join(""); }
-function renderMetrics() { const { slices, boards, settings } = state.result, used = slices.reduce((sum, slice) => sum + slice.width * slice.height, 0), total = boards.length * settings.width * settings.height; $("metrics").innerHTML = `<div><span>Tranches</span><strong>${slices.length}</strong></div><div><span>Panneaux</span><strong>${boards.length}</strong></div><div><span>Utilisation</span><strong>${(used / total * 100).toFixed(1)}%</strong></div>`; }
+function fitNestView() {
+  const layout = nestLayout(), padding = 48, scale = Math.min((canvas.width - padding * 2) / layout.width, (canvas.height - padding * 2) / layout.height);
+  state.nestView = { scale, x: (canvas.width - layout.width * scale) / 2, y: (canvas.height - layout.height * scale) / 2 };
+}
+function drawNest() {
+  if (!state.result) return;
+  const { boards, slices, settings } = state.result, layout = nestLayout(), view = state.nestView || (fitNestView(), state.nestView);
+  const point = (x, y) => [view.x + x * view.scale, view.y + (layout.height - y) * view.scale];
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#f4f6f3"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!boards.length) { ctx.fillStyle = "#68747b"; ctx.font = "14px system-ui"; ctx.textAlign = "center"; ctx.fillText("Sélectionnez au moins une tranche pour afficher la disposition.", canvas.width / 2, canvas.height / 2); ctx.textAlign = "start"; return; }
+  boards.forEach((board, index) => {
+    const [ox, oy] = layout.origin(index), [left, top] = point(ox, oy + settings.height), boardW = settings.width * view.scale, boardH = settings.height * view.scale;
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = "#48605c"; ctx.lineWidth = 1; ctx.fillRect(left, top, boardW, boardH); ctx.strokeRect(left, top, boardW, boardH);
+    ctx.fillStyle = "#40504e"; ctx.font = "600 12px system-ui"; ctx.fillText(`Panneau ${index + 1}`, left + 8, top + 17);
+  });
+  ctx.strokeStyle = "#c23d24"; ctx.lineWidth = Math.max(.75, Math.min(2, view.scale * .45)); ctx.lineJoin = "round"; ctx.lineCap = "round";
+  slices.forEach((slice) => {
+    const [ox, oy] = layout.origin(slice.board);
+    ctx.beginPath();
+    slice.segments.forEach(([a, b]) => {
+      const transform = (p) => slice.rotated ? [ox + slice.x + (p[1] - slice.minY), oy + slice.y + slice.width - (p[0] - slice.minX)] : [ox + slice.x + p[0] - slice.minX, oy + slice.y + p[1] - slice.minY];
+      const pa = transform(a), pb = transform(b), [ax, ay] = point(...pa), [bx, by] = point(...pb);
+      ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+    });
+    ctx.stroke();
+    const sliceWidth = slice.rotated ? slice.height : slice.width, sliceHeight = slice.rotated ? slice.width : slice.height;
+    const [labelX, labelY] = point(ox + slice.x + sliceWidth / 2, oy + slice.y + sliceHeight / 2);
+    const radius = 11;
+    ctx.fillStyle = "#16232c"; ctx.beginPath(); ctx.arc(labelX, labelY, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = "700 11px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(slice.number, labelX, labelY + .5); ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+  });
+}
+function installNestControls() {
+  let drag = null;
+  const position = (event) => { const rect = canvas.getBoundingClientRect(); return [(event.clientX - rect.left) * canvas.width / rect.width, (event.clientY - rect.top) * canvas.height / rect.height]; };
+  canvas.addEventListener("wheel", (event) => {
+    if (!state.result) return;
+    event.preventDefault();
+    const [x, y] = position(event), view = state.nestView, factor = event.deltaY < 0 ? 1.18 : 1 / 1.18, nextScale = Math.max(.02, Math.min(20, view.scale * factor));
+    view.x = x - (x - view.x) * nextScale / view.scale; view.y = y - (y - view.y) * nextScale / view.scale; view.scale = nextScale; drawNest();
+  }, { passive: false });
+  canvas.addEventListener("pointerdown", (event) => { if (!state.result) return; const [x, y] = position(event); drag = { x, y, viewX: state.nestView.x, viewY: state.nestView.y }; canvas.setPointerCapture(event.pointerId); });
+  canvas.addEventListener("pointermove", (event) => { if (!drag) return; const [x, y] = position(event); state.nestView.x = drag.viewX + x - drag.x; state.nestView.y = drag.viewY + y - drag.y; drawNest(); });
+  canvas.addEventListener("pointerup", () => { drag = null; });
+}
+function renderSlices() { $("sliceList").innerHTML = state.sourceSlices.map((slice) => { const active = !state.disabledSlices.has(slice.number), placed = state.result.slices.find((item) => item.number === slice.number); return `<article class="slice-card${active ? "" : " is-disabled"}"><label><input class="slice-toggle" type="checkbox" value="${slice.number}" ${active ? "checked" : ""} /><strong>Tranche ${slice.number}</strong></label><span>${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm${placed ? ` · panneau ${placed.board + 1}` : " · désactivée"}</span></article>`; }).join(""); }
+function renderMetrics() { const { slices, boards, settings } = state.result, used = slices.reduce((sum, slice) => sum + slice.width * slice.height, 0), total = boards.length * settings.width * settings.height; $("metrics").innerHTML = `<div><span>Tranches</span><strong>${slices.length}</strong></div><div><span>Panneaux</span><strong>${boards.length}</strong></div><div><span>Utilisation</span><strong>${total ? (used / total * 100).toFixed(1) : "-"}%</strong></div>`; }
 function downloadDxf() { const { slices, settings } = state.result; const lines = ["0","SECTION","2","HEADER","0","ENDSEC","0","SECTION","2","ENTITIES"]; for (const slice of slices) for (const [a, b] of slice.segments) { const transform = (p) => { const x = p[0] - slice.minX, y = p[1] - slice.minY; return slice.rotated ? [slice.x + y, slice.y + slice.width - x] : [slice.x + x, slice.y + y]; }; const p1 = transform(a), p2 = transform(b); lines.push("0","LINE","8",`SLICE_${slice.number}`,"10",p1[0].toFixed(4),"20",p1[1].toFixed(4),"30","0","11",p2[0].toFixed(4),"21",p2[1].toFixed(4),"31","0"); } lines.push("0","ENDSEC","0","EOF"); const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "application/dxf" })); const link = document.createElement("a"); link.href = url; link.download = "slices-nested.dxf"; link.click(); URL.revokeObjectURL(url); }
 function setStatus(text, error = false) { const node = $("status"); node.textContent = text; node.style.color = error ? "#b83a20" : ""; }
 const isFinitePoint3 = (point) => point.length === 3 && point.every(Number.isFinite); const isFiniteSegment = (segment) => Array.isArray(segment) && segment.length === 2 && segment.every((point) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite)); const sub = (a, b) => a.map((n, i) => n - b[i]); const add = (a, b) => a.map((n, i) => n + b[i]); const scale = (v, factor) => v.map((n) => n * factor); const dot = (a, b) => a.reduce((sum, n, i) => sum + n * b[i], 0); const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; const normalize = (v) => { const length = Math.hypot(...v); return length && Number.isFinite(length) ? v.map((n) => n / length) : null; }; const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
