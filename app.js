@@ -70,9 +70,10 @@ function calculateSlices(thickness) {
   // Slice centers are aligned to the reference plane (local z = 0), including for a free plane.
   const firstCenter = Math.ceil((minZ - thickness / 2) / thickness) * thickness + thickness / 2;
   for (let z = firstCenter, number = 1; z < maxZ + 1e-7; z += thickness, number++) {
-    const segments = localTriangles.flatMap((triangle) => intersectionSegment(triangle, z)).filter(Boolean);
+    const segments = localTriangles.map((triangle) => intersectionSegment(triangle, z)).filter(isFiniteSegment);
     if (!segments.length) continue;
-    slices.push({ number, z, segments, ...segmentBounds(segments) });
+    const bounds = segmentBounds(segments);
+    if (bounds) slices.push({ number, z, segments, ...bounds });
   }
   return { basis, slices };
 }
@@ -171,6 +172,7 @@ function getBasis() {
   normal = normalize(normal);
   if (!normal) throw new Error("la normale du plan libre ne peut pas être nulle");
   const origin = state.mode === "free" ? [Number($("pointX").value), Number($("pointY").value), Number($("pointZ").value)] : [0, 0, 0];
+  if (!origin.every(Number.isFinite)) throw new Error("le point du plan libre doit contenir des valeurs numériques");
   const helper = Math.abs(normal[2]) < .9 ? [0, 0, 1] : [0, 1, 0];
   const u = normalize(cross(helper, normal)), v = cross(normal, u);
   return { origin, u, v, normal };
@@ -185,25 +187,27 @@ function intersectionSegment(triangle, z) {
     if (Math.abs(da) < 1e-8) points.push([a[0], a[1]]);
     else if (da * db < 0) { const t = da / (da - db); points.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]); }
   }
-  const unique = points.filter((p, i) => !points.slice(0, i).some((q) => distance(p, q) < 1e-6));
+  const unique = points.filter((point) => point.every(Number.isFinite)).filter((p, i, validPoints) => !validPoints.slice(0, i).some((q) => distance(p, q) < 1e-6));
   return unique.length === 2 ? unique : null;
 }
-function segmentBounds(segments) { const points = segments.flat(); const minX = Math.min(...points.map((p) => p[0])), maxX = Math.max(...points.map((p) => p[0])), minY = Math.min(...points.map((p) => p[1])), maxY = Math.max(...points.map((p) => p[1])); return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY }; }
+function segmentBounds(segments) { const points = segments.flat().filter((point) => point.every(Number.isFinite)); if (!points.length) return null; const minX = Math.min(...points.map((p) => p[0])), maxX = Math.max(...points.map((p) => p[0])), minY = Math.min(...points.map((p) => p[1])), maxY = Math.max(...points.map((p) => p[1])); const bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY }; return Object.values(bounds).every(Number.isFinite) ? bounds : null; }
 
 function nestSlices(slices, s) {
-  const gap = s.tool, usableW = s.width - 2 * s.margin, usableH = s.height - 2 * s.margin;
+  const gap = s.tool, usableW = s.width - 2 * s.margin, usableH = s.height - 2 * s.margin, tolerance = 1e-6;
   if (usableW <= 0 || usableH <= 0) throw new Error("la marge dépasse les dimensions du panneau");
+  const fits = (w, h) => w <= usableW + tolerance && h <= usableH + tolerance;
+  const sliceTooLarge = (slice) => `la tranche ${slice.number} (${slice.width.toFixed(1)} x ${slice.height.toFixed(1)} mm) ne tient pas dans la zone utile du panneau (${usableW.toFixed(1)} x ${usableH.toFixed(1)} mm)`;
   const sorted = [...slices].sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height));
   const boards = [];
   for (const slice of sorted) {
     const variants = [{ rotated: false, w: slice.width, h: slice.height }, { rotated: true, w: slice.height, h: slice.width }].filter((v, i, arr) => i === 0 || v.w !== arr[0].w || v.h !== arr[0].h);
-    if (variants.every((v) => v.w > usableW || v.h > usableH)) throw new Error(`la tranche ${slice.number} ne tient pas dans le panneau`);
+    if (variants.every((v) => !fits(v.w, v.h))) throw new Error(sliceTooLarge(slice));
     let choice;
     for (const board of boards) for (const variant of variants) { const pos = board.find(variant.w, variant.h, gap); if (pos && (!choice || pos.y < choice.pos.y || (pos.y === choice.pos.y && pos.x < choice.pos.x))) choice = { board, variant, pos }; }
     if (!choice) {
       const board = new ShelfBoard(usableW, usableH);
-      const variant = variants.find((v) => v.w <= usableW && v.h <= usableH);
-      if (!variant) throw new Error(`la tranche ${slice.number} ne tient pas dans le panneau`);
+      const variant = variants.find((v) => fits(v.w, v.h));
+      if (!variant) throw new Error(sliceTooLarge(slice));
       const pos = board.find(variant.w, variant.h, gap);
       if (!pos) throw new Error(`impossible de placer la tranche ${slice.number} sur un nouveau panneau`);
       boards.push(board);
@@ -214,7 +218,7 @@ function nestSlices(slices, s) {
   }
   return { slices: sorted, boards };
 }
-class ShelfBoard { constructor(w, h) { this.w = w; this.h = h; this.shelves = []; } find(w, h, gap) { for (const shelf of this.shelves) if (h <= shelf.h && shelf.x + w <= this.w) return { x: shelf.x, y: shelf.y, shelf }; const y = this.shelves.length ? this.shelves.at(-1).y + this.shelves.at(-1).h + gap : 0; return y + h <= this.h ? { x: 0, y, shelf: null } : null; } add(pos, w, h, gap) { if (pos.shelf) pos.shelf.x += w + gap; else this.shelves.push({ y: pos.y, h, x: w + gap }); } }
+class ShelfBoard { constructor(w, h) { this.w = w; this.h = h; this.shelves = []; } find(w, h, gap) { const tolerance = 1e-6; for (const shelf of this.shelves) if (h <= shelf.h + tolerance && shelf.x + w <= this.w + tolerance) return { x: shelf.x, y: shelf.y, shelf }; const y = this.shelves.length ? this.shelves.at(-1).y + this.shelves.at(-1).h + gap : 0; return y + h <= this.h + tolerance ? { x: 0, y, shelf: null } : null; } add(pos, w, h, gap) { if (pos.shelf) pos.shelf.x += w + gap; else this.shelves.push({ y: pos.y, h, x: w + gap }); } }
 
 function drawNest() {
   const { boards, slices, settings } = state.result, pad = 30, cols = Math.min(boards.length, 3), scale = Math.min((canvas.width - pad * (cols + 1)) / (cols * settings.width), 220 / settings.height), boardH = settings.height * scale, rows = Math.ceil(boards.length / cols);
@@ -225,4 +229,4 @@ function renderSlices() { $("sliceList").innerHTML = state.result.slices.map((sl
 function renderMetrics() { const { slices, boards, settings } = state.result, used = slices.reduce((sum, slice) => sum + slice.width * slice.height, 0), total = boards.length * settings.width * settings.height; $("metrics").innerHTML = `<div><span>Tranches</span><strong>${slices.length}</strong></div><div><span>Panneaux</span><strong>${boards.length}</strong></div><div><span>Utilisation</span><strong>${(used / total * 100).toFixed(1)}%</strong></div>`; }
 function downloadDxf() { const { slices, settings } = state.result; const lines = ["0","SECTION","2","HEADER","0","ENDSEC","0","SECTION","2","ENTITIES"]; for (const slice of slices) for (const [a, b] of slice.segments) { const transform = (p) => { const x = p[0] - slice.minX, y = p[1] - slice.minY; return slice.rotated ? [slice.x + y, slice.y + slice.width - x] : [slice.x + x, slice.y + y]; }; const p1 = transform(a), p2 = transform(b); lines.push("0","LINE","8",`SLICE_${slice.number}`,"10",p1[0].toFixed(4),"20",p1[1].toFixed(4),"30","0","11",p2[0].toFixed(4),"21",p2[1].toFixed(4),"31","0"); } lines.push("0","ENDSEC","0","EOF"); const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "application/dxf" })); const link = document.createElement("a"); link.href = url; link.download = "slices-nested.dxf"; link.click(); URL.revokeObjectURL(url); }
 function setStatus(text, error = false) { const node = $("status"); node.textContent = text; node.style.color = error ? "#b83a20" : ""; }
-const isFinitePoint3 = (point) => point.length === 3 && point.every(Number.isFinite); const sub = (a, b) => a.map((n, i) => n - b[i]); const add = (a, b) => a.map((n, i) => n + b[i]); const scale = (v, factor) => v.map((n) => n * factor); const dot = (a, b) => a.reduce((sum, n, i) => sum + n * b[i], 0); const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; const normalize = (v) => { const length = Math.hypot(...v); return length && Number.isFinite(length) ? v.map((n) => n / length) : null; }; const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const isFinitePoint3 = (point) => point.length === 3 && point.every(Number.isFinite); const isFiniteSegment = (segment) => Array.isArray(segment) && segment.length === 2 && segment.every((point) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite)); const sub = (a, b) => a.map((n, i) => n - b[i]); const add = (a, b) => a.map((n, i) => n + b[i]); const scale = (v, factor) => v.map((n) => n * factor); const dot = (a, b) => a.reduce((sum, n, i) => sum + n * b[i], 0); const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; const normalize = (v) => { const length = Math.hypot(...v); return length && Number.isFinite(length) ? v.map((n) => n / length) : null; }; const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
