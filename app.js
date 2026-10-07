@@ -62,9 +62,11 @@ function calculateSlices(thickness) {
   const localTriangles = state.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
   const { min: minZ, max: maxZ } = coordinateRange(localTriangles, 2);
   const slices = [];
-  // Slice centers are aligned to the reference plane (local z = 0), including for a free plane.
-  const firstCenter = Math.ceil((minZ - thickness / 2) / thickness) * thickness + thickness / 2;
-  for (let z = firstCenter, number = 1; z < maxZ + 1e-7; z += thickness, number++) {
+  // Start at the far model face. Offset imperceptibly inside the mesh so coplanar STL faces intersect reliably.
+  const intersectionOffset = Math.min(1e-7, (maxZ - minZ) / 2);
+  let number = 1;
+  for (let plane = minZ; plane < maxZ - 1e-7; plane += thickness, number++) {
+    const z = plane + intersectionOffset;
     const segments = localTriangles.map((triangle) => intersectionSegment(triangle, z)).filter(isFiniteSegment);
     if (!segments.length) continue;
     const bounds = segmentBounds(segments);
@@ -129,16 +131,19 @@ function refreshSlicePreview() {
     const basis = getBasis();
     const localTriangles = state.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
     const { min: minZ, max: maxZ } = coordinateRange(localTriangles, 2);
-    const firstCenter = Math.ceil((minZ - thickness / 2) / thickness) * thickness + thickness / 2;
-    const count = Math.max(0, Math.floor((maxZ - firstCenter) / thickness) + 1);
+    const { min: minU, max: maxU } = coordinateRange(localTriangles, 0);
+    const { min: minV, max: maxV } = coordinateRange(localTriangles, 1);
+    const planes = slicePlanePositions(minZ, maxZ, thickness, true);
+    const count = planes.length;
     const displayEvery = Math.max(1, Math.ceil(count / 80));
-    const extent = Math.hypot(viewer.size.x, viewer.size.y, viewer.size.z) * 1.08;
     const normal = new THREE.Vector3(...basis.normal);
-    const planeGeometry = new THREE.PlaneGeometry(extent, extent);
+    const width = maxU - minU, height = maxV - minV;
+    const planeGeometry = new THREE.PlaneGeometry(width, height);
     const material = new THREE.MeshBasicMaterial({ color: 0xf25a38, transparent: true, opacity: .11, side: THREE.DoubleSide, depthWrite: false });
-    const outlineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-extent / 2, -extent / 2, 0), new THREE.Vector3(extent / 2, -extent / 2, 0), new THREE.Vector3(extent / 2, extent / 2, 0), new THREE.Vector3(-extent / 2, extent / 2, 0), new THREE.Vector3(-extent / 2, -extent / 2, 0)]);
+    const outlineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-width / 2, -height / 2, 0), new THREE.Vector3(width / 2, -height / 2, 0), new THREE.Vector3(width / 2, height / 2, 0), new THREE.Vector3(-width / 2, height / 2, 0), new THREE.Vector3(-width / 2, -height / 2, 0)]);
     for (let index = 0; index < count; index += displayEvery) {
-      const z = firstCenter + index * thickness, position = add(basis.origin, scale(basis.normal, z));
+      const z = planes[index];
+      const position = add(add(add(basis.origin, scale(basis.u, (minU + maxU) / 2)), scale(basis.v, (minV + maxV) / 2)), scale(basis.normal, z));
       const group = new THREE.Group();
       group.position.set(...position);
       group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
@@ -175,6 +180,12 @@ function coordinateRange(triangles, coordinate) {
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error("le STL ne contient aucune coordonnée exploitable");
   return { min, max };
+}
+function slicePlanePositions(min, max, thickness, includeTerminal = false) {
+  const planes = [];
+  for (let z = min; z < max - 1e-7; z += thickness) planes.push(z);
+  if (includeTerminal && (!planes.length || max - planes.at(-1) > 1e-7)) planes.push(max);
+  return planes;
 }
 function project(point, basis) { const d = sub(point, basis.origin); return [dot(d, basis.u), dot(d, basis.v), dot(d, basis.normal)]; }
 function intersectionSegment(triangle, z) {
