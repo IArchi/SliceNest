@@ -1,24 +1,19 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const state = { triangles: [], mode: "axis", result: null, viewer: null };
+const state = { triangles: [], result: null, viewer: null };
 const canvas = $("nestCanvas"), ctx = canvas.getContext("2d");
-
-document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => {
-  state.mode = button.dataset.mode;
-  document.querySelectorAll("[data-mode]").forEach((item) => item.classList.toggle("active", item === button));
-  $("axisFields").hidden = state.mode !== "axis";
-  $("freeFields").hidden = state.mode !== "free";
-  refreshSlicePreview();
-}));
 
 $("stlFile").addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file) return;
   try {
     state.triangles = parseStl(await file.arrayBuffer());
+    state.result = null;
     $("fileName").textContent = file.name;
     $("sliceButton").disabled = !state.triangles.length;
+    $("sliceResults").hidden = true;
+    $("downloadButton").disabled = true;
     showModelPreview();
     setStatus(`${state.triangles.length.toLocaleString("fr-FR")} triangles chargés.`);
   } catch (error) { setStatus(`Erreur STL : ${error.message}`, true); }
@@ -26,7 +21,7 @@ $("stlFile").addEventListener("change", async (event) => {
 $("sliceButton").addEventListener("click", sliceAndNest);
 $("downloadButton").addEventListener("click", downloadDxf);
 $("fitViewButton").addEventListener("click", () => state.viewer?.fit());
-document.querySelectorAll("#sliceAxis, #pointX, #pointY, #pointZ, #normalX, #normalY, #normalZ, #thickness").forEach((input) => input.addEventListener("input", refreshSlicePreview));
+document.querySelectorAll("#sliceAxis, #thickness").forEach((input) => input.addEventListener("input", refreshSlicePreview));
 
 function parseStl(buffer) {
   const view = new DataView(buffer);
@@ -56,6 +51,7 @@ function sliceAndNest() {
     const placed = nestSlices(slices, settings);
     state.result = { slices: placed.slices, boards: placed.boards, settings };
     drawNest(); renderSlices(); renderMetrics();
+    $("sliceResults").hidden = false;
     $("downloadButton").disabled = false;
     setStatus(`${slices.length} tranches réparties sur ${placed.boards.length} panneau(x).`);
   } catch (error) { setStatus(`Impossible de découper : ${error.message}`, true); }
@@ -164,15 +160,9 @@ function settingsFromInputs() {
 }
 
 function getBasis() {
-  let normal;
-  if (state.mode === "axis") {
-    const axis = $("sliceAxis").value;
-    normal = axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];
-  } else normal = [Number($("normalX").value), Number($("normalY").value), Number($("normalZ").value)];
-  normal = normalize(normal);
-  if (!normal) throw new Error("la normale du plan libre ne peut pas être nulle");
-  const origin = state.mode === "free" ? [Number($("pointX").value), Number($("pointY").value), Number($("pointZ").value)] : [0, 0, 0];
-  if (!origin.every(Number.isFinite)) throw new Error("le point du plan libre doit contenir des valeurs numériques");
+  const axis = $("sliceAxis").value;
+  const normal = axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];
+  const origin = [0, 0, 0];
   const helper = Math.abs(normal[2]) < .9 ? [0, 0, 1] : [0, 1, 0];
   const u = normalize(cross(helper, normal)), v = cross(normal, u);
   return { origin, u, v, normal };

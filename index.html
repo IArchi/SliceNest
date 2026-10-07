@@ -21,16 +21,7 @@
         </section>
         <section>
           <h2>2. Plan de découpe</h2>
-          <div class="segmented" role="group" aria-label="Mode du plan">
-            <button class="active" data-mode="axis">Axes rapides</button><button data-mode="free">Plan libre</button>
-          </div>
-          <div id="axisFields">
-            <label>Axe normal<select id="sliceAxis"><option value="z">XY · normal Z</option><option value="y">XZ · normal Y</option><option value="x">YZ · normal X</option></select></label>
-          </div>
-          <div id="freeFields" hidden>
-            <div class="triple"><label>Point X<input id="pointX" type="number" value="0" step="1" /></label><label>Y<input id="pointY" type="number" value="0" step="1" /></label><label>Z<input id="pointZ" type="number" value="0" step="1" /></label></div>
-            <div class="triple"><label>Normale X<input id="normalX" type="number" value="0" step="0.1" /></label><label>Y<input id="normalY" type="number" value="0" step="0.1" /></label><label>Z<input id="normalZ" type="number" value="1" step="0.1" /></label></div>
-          </div>
+          <label>Axe normal<select id="sliceAxis"><option value="z">XY · normal Z</option><option value="y">XZ · normal Y</option><option value="x">YZ · normal X</option></select></label>
         </section>
         <section>
           <h2>3. Workpiece</h2>
@@ -43,9 +34,11 @@
       </aside>
       <section class="workspace">
         <div class="panel model-view"><div class="preview-head"><div><h2>Aperçu 3D des tranches</h2><p class="hint">Glissez pour tourner, utilisez la molette pour zoomer. Les plans orange représentent les slices qui seront produites.</p></div><button id="fitViewButton" type="button">Cadrer le modèle</button></div><div id="modelViewer" aria-label="Vue 3D du modèle STL"><p id="viewerEmpty">Importez un STL pour afficher sa prévisualisation 3D.</p></div></div>
-        <div class="metrics" id="metrics"><div><span>Tranches</span><strong>-</strong></div><div><span>Panneaux</span><strong>-</strong></div><div><span>Utilisation</span><strong>-</strong></div></div>
-        <div class="panel preview"><div class="preview-head"><h2>Disposition des workpieces</h2><button id="downloadButton" disabled>Exporter DXF</button></div><canvas id="nestCanvas" width="1200" height="700"></canvas><p class="hint">Les formes représentent les enveloppes des contours exportés. Cliquez sur Slice &amp; Nest pour recalculer.</p></div>
-        <div class="panel slices"><h2>Tranches générées</h2><div id="sliceList" class="slice-list"><p class="empty">Aucune tranche calculée.</p></div></div>
+        <div id="sliceResults" hidden>
+          <div class="metrics" id="metrics"><div><span>Tranches</span><strong>-</strong></div><div><span>Panneaux</span><strong>-</strong></div><div><span>Utilisation</span><strong>-</strong></div></div>
+          <div class="panel preview"><div class="preview-head"><h2>Disposition des workpieces</h2><button id="downloadButton" disabled>Exporter DXF</button></div><canvas id="nestCanvas" width="1200" height="700"></canvas><p class="hint">Les formes représentent les enveloppes des contours exportés.</p></div>
+          <div class="panel slices"><h2>Tranches générées</h2><div id="sliceList" class="slice-list"><p class="empty">Aucune tranche calculée.</p></div></div>
+        </div>
       </section>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
