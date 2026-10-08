@@ -132,9 +132,7 @@ function showModelPreview() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(item.triangles.flat(2)), 3));
     geometry.computeVertexNormals();
-    const color = [0x168b84, 0x506fc4, 0xbd7d32, 0x9a4d96][index % 4];
-    group.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: .45, side: THREE.DoubleSide, depthWrite: false })));
-    group.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 25), new THREE.LineBasicMaterial({ color, transparent: true, opacity: .45 })));
+    group.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x6a747a, roughness: .82, metalness: 0, side: THREE.DoubleSide })));
     viewer.model.add(group);
   });
   refreshSlicePreview();
@@ -146,8 +144,8 @@ function createViewer(container) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   container.append(renderer.domElement);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x345b56, 2.2));
-  const key = new THREE.DirectionalLight(0xffffff, 2.3); key.position.set(1, 2, 3); scene.add(key);
+  scene.add(new THREE.HemisphereLight(0xb8c0c4, 0x263137, .8));
+  const key = new THREE.DirectionalLight(0xd5dde0, .9); key.position.set(1, 2, 3); scene.add(key);
   const model = new THREE.Group(), planes = new THREE.Group(); scene.add(model, planes);
   const viewer = { scene, camera, renderer, model, planes, center: new THREE.Vector3(), size: new THREE.Vector3(1, 1, 1), target: new THREE.Vector3(), azimuth: -.65, elevation: .45, distance: 100, dragging: false };
   viewer.fit = () => { const largest = Math.max(viewer.size.x, viewer.size.y, viewer.size.z, 1); viewer.distance = largest * 2.1; viewer.target.copy(viewer.center); renderViewer(viewer); };
@@ -182,27 +180,21 @@ function addSlicePlanes(viewer, model, thickness) {
   const basis = getBasis(model.axis);
   const localTriangles = model.triangles.map((triangle) => triangle.map((point) => project(point, basis)));
   const { min: minZ, max: maxZ } = coordinateRange(localTriangles, 2);
-  const { min: minU, max: maxU } = coordinateRange(localTriangles, 0);
-  const { min: minV, max: maxV } = coordinateRange(localTriangles, 1);
   const planes = slicePlanePositions(minZ, maxZ, thickness, true);
   const count = planes.length;
   const displayEvery = Math.max(1, Math.ceil(count / 80));
-  const normal = new THREE.Vector3(...basis.normal);
   const planeGroup = new THREE.Group();
   planeGroup.name = `planes-${model.id}`;
-  const width = maxU - minU, height = maxV - minV;
-  const planeGeometry = new THREE.PlaneGeometry(width, height);
-  const material = new THREE.MeshBasicMaterial({ color: 0xf25a38, transparent: true, opacity: .11, side: THREE.DoubleSide, depthWrite: false });
-  const outlineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-width / 2, -height / 2, 0), new THREE.Vector3(width / 2, -height / 2, 0), new THREE.Vector3(width / 2, height / 2, 0), new THREE.Vector3(-width / 2, height / 2, 0), new THREE.Vector3(-width / 2, -height / 2, 0)]);
   for (let index = 0; index < count; index += displayEvery) {
     const z = planes[index];
-    const position = add(add(add(basis.origin, scale(basis.u, (minU + maxU) / 2)), scale(basis.v, (minV + maxV) / 2)), scale(basis.normal, z));
-    const group = new THREE.Group();
-    group.position.set(...position);
-    group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
-    group.add(new THREE.Mesh(planeGeometry, material));
-    group.add(new THREE.Line(outlineGeometry, new THREE.LineBasicMaterial({ color: 0xe14b2b, transparent: true, opacity: .45 })));
-    planeGroup.add(group);
+    const segments = localTriangles.map((triangle) => intersectionSegment(triangle, z)).filter(isFiniteSegment);
+    if (!segments.length) continue;
+    const points = segments.flatMap(([start, end]) => [
+      localToWorld(start, z, basis),
+      localToWorld(end, z, basis)
+    ]);
+    const geometry = new THREE.BufferGeometry().setFromPoints(points.map((point) => new THREE.Vector3(...point)));
+    planeGroup.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0x00d8e8, transparent: true, opacity: .95, depthTest: true })));
   }
   viewer.planes.add(planeGroup);
 }
@@ -253,6 +245,7 @@ function slicePlanePositions(min, max, thickness, includeTerminal = false) {
   return planes;
 }
 function project(point, basis) { const d = sub(point, basis.origin); return [dot(d, basis.u), dot(d, basis.v), dot(d, basis.normal)]; }
+function localToWorld(point, z, basis) { return add(add(add(basis.origin, scale(basis.u, point[0])), scale(basis.v, point[1])), scale(basis.normal, z)); }
 function intersectionSegment(triangle, z) {
   if (!triangle.every((point) => point.every(Number.isFinite)) || !Number.isFinite(z)) return null;
   const points = [];
